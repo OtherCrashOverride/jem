@@ -8,6 +8,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/radix-tree.h>
+#include <linux/mutex.h>
 
 
 #include "jem.h"
@@ -47,6 +48,7 @@ static jem_dev_t jem_dev;
 //static int next_id;
 
 RADIX_TREE(dmabuf_entries, GFP_KERNEL);  /* Declare and initialize */
+DEFINE_MUTEX(entries_mutex);
 
 
 void jem_flush_all(void)
@@ -54,6 +56,8 @@ void jem_flush_all(void)
     struct radix_tree_iter iter;            
     void **slot;  
     attach_entry_t* entry = NULL;
+
+    mutex_lock(&entries_mutex);
 
     radix_tree_for_each_slot(slot, &dmabuf_entries, &iter, 0)
     {
@@ -70,6 +74,8 @@ void jem_flush_all(void)
             kfree(entry);            
         }
     }
+
+    mutex_unlock(&entries_mutex);
 }
 
 
@@ -129,12 +135,17 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
 
 
                 // Record the entry
+                mutex_lock(&entries_mutex);
+
                 err = radix_tree_insert(&dmabuf_entries, (unsigned long)fd, (void*)entry);
                 if (err != 0)
                 {
                     printk(KERN_ALERT "jem_ioctl: radix_tree_insert failed. (%d)\n", err);
+                    mutex_unlock(&entries_mutex);
                     goto A_err2;
                 }
+
+                mutex_unlock(&entries_mutex);
 
 
                 // Return parameters to user
@@ -171,8 +182,10 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
                     return -1;	//TODO: error code
                 }
 
+                mutex_lock(&entries_mutex);
                 radix_tree_delete(&dmabuf_entries, entry->dmabuf_fd);
-                
+                mutex_unlock(&entries_mutex);
+
                 dma_buf_detach(entry->dmabuf, entry->attachment);
                 dma_buf_put(entry->dmabuf);
                 kfree(entry);
@@ -191,12 +204,16 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
 
 
                 // Retreive the entry
+                mutex_lock(&entries_mutex);
                 entry = (attach_entry_t*)radix_tree_lookup(&dmabuf_entries, (unsigned long)fd);
                 if (entry == NULL)
                 {
                     printk(KERN_ALERT "jem_ioctl: JEM_CREATE_FD entry does not exist for fd (%d).\n", fd);
+                    mutex_unlock(&entries_mutex);
                     return -1;	//TODO: error code
                 }
+                mutex_unlock(&entries_mutex);
+
 
                 err = dma_buf_fd(entry->dmabuf, O_CLOEXEC);
 
