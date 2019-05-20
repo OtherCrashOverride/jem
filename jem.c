@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/radix-tree.h>
 #include <linux/mutex.h>
+#include <linux/fs.h>
 
 
 #include "jem.h"
@@ -39,6 +40,7 @@ typedef struct
 	int _padding00;
 	struct dma_buf* dmabuf;
 	struct dma_buf_attachment* attachment;
+    struct file* file;
 } attach_entry_t;
 
 
@@ -68,9 +70,10 @@ void jem_flush_all(void)
             
             radix_tree_delete(&dmabuf_entries, entry->dmabuf_fd);
 
-            dma_buf_detach(entry->dmabuf, entry->attachment);
-            dma_buf_put(entry->dmabuf);
-
+            //dma_buf_detach(entry->dmabuf, entry->attachment);
+            //dma_buf_put(entry->dmabuf);
+            fput(entry->file);
+            
             kfree(entry);            
         }
     }
@@ -115,7 +118,7 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
                     return -ENOMEM;
                 }
 
-
+#if 0
                 // Attach
                 entry->dmabuf_fd = fd;
                 entry->dmabuf = dma_buf_get(entry->dmabuf_fd);
@@ -132,6 +135,10 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
                     printk(KERN_ALERT "jem_ioctl: ATTACH_DMABUF dma_buf_attach failed.\n");
                     goto A_err1;
                 }
+#else
+                entry->file = fget(fd);
+
+#endif
 
 
                 // Record the entry
@@ -154,10 +161,10 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
 
 
             A_err2:
-                dma_buf_detach(entry->dmabuf, entry->attachment);
+                //dma_buf_detach(entry->dmabuf, entry->attachment);
 
             A_err1:
-                dma_buf_put(entry->dmabuf);
+                //dma_buf_put(entry->dmabuf);
 
             A_err0:
                 kfree(entry);
@@ -183,11 +190,12 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
                 }
 
                 mutex_lock(&entries_mutex);
-                radix_tree_delete(&dmabuf_entries, entry->dmabuf_fd);
+                radix_tree_delete(&dmabuf_entries, fd);
                 mutex_unlock(&entries_mutex);
 
-                dma_buf_detach(entry->dmabuf, entry->attachment);
-                dma_buf_put(entry->dmabuf);
+                //dma_buf_detach(entry->dmabuf, entry->attachment);
+                //dma_buf_put(entry->dmabuf);
+                fput(entry->file);
                 kfree(entry);
 
                 printk(KERN_INFO "jem_ioctl: JEM_RELEASE_DMABUF OK (fd=%d)\n", fd);
@@ -215,9 +223,21 @@ long jem_ioctl(struct file *file, unsigned int cmd, ulong arg)
                 mutex_unlock(&entries_mutex);
 
 
-                err = dma_buf_fd(entry->dmabuf, O_CLOEXEC);
+                //err = dma_buf_fd(entry->dmabuf, O_CLOEXEC);
 
-                printk(KERN_INFO "jem_ioctl: JEM_CREATE_FD OK (ret=%d)\n", err);
+                err = get_unused_fd_flags(0);
+                if (err >= 0)
+                {
+                    get_file(entry->file);
+                    fd_install(err, entry->file);
+
+                    printk(KERN_INFO "jem_ioctl: JEM_CREATE_FD OK (ret=%d)\n", err);
+                }
+                else
+                {
+                    printk(KERN_INFO "jem_ioctl: JEM_CREATE_FD FAIL (ret=%d)\n", err);
+                }
+                
                 return err;
             }
             break;
