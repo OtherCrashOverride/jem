@@ -38,8 +38,6 @@ typedef struct
 {
 	int dmabuf_fd;
 	int _padding00;
-	struct dma_buf* dmabuf;
-	struct dma_buf_attachment* attachment;
     struct file* file;
 } attach_entry_t;
 
